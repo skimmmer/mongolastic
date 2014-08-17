@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/DominicBoettger/mongolastic.svg?branch=master)](https://travis-ci.org/DominicBoettger/mongolastic)
+[![Build Status](https://travis-ci.org/inspirationlabs/mongolastic.svg?branch=master)](https://travis-ci.org/inspirationlabs/mongolastic)
 
 [![NPM](https://nodei.co/npm-dl/mongolastic.png?months=1)](https://nodei.co/npm/mongolastic/)
 
@@ -28,9 +28,14 @@ CatSchema.plugin(mongolastic.plugin, {modelname: 'cat'});
 var cat = mongoose.model('cat', CatSchema);
 ```
 
-##  Todo
+## Additional new functions
+- References can be automatically saved as denormalized (populated) version in the elasticsearch index.
+- Recursive population of documents
+- Render a specific mapping for document types
+- Sync function
+- Sync function as much more performant bulk operation
 
-- ~~Sync function~~ (DONE)
+By the way... mongolastic is a core component of the upcoming molecuel CMS. [https://github.com/molecuel](https://github.com/molecuel)
 
 ## License (MIT)
 

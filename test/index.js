@@ -14,7 +14,8 @@ describe('mongolastic', function(){
 
     CostumeSchema = mongoose.Schema({
       name: {type: String},
-      color: {type: String}
+      color: {type: String},
+      integer: {type: Number, elastic: {mapping: {type: 'integer'}}}
     });
     CostumeSchema.plugin(mongolastic.plugin, {modelname: 'costume'});
     costume = mongoose.model('costume', CostumeSchema);
@@ -219,14 +220,18 @@ describe('mongolastic', function(){
         done();
       });
     });
+
+    it('should return the correct prefix', function(done) {
+      assert.equal(mongolastic.getIndexName('model'), 'mongolastic-model');
+      assert.equal(mongolastic.getIndexName('mongolastic-model'), 'mongolastic-model');
+      done();
+    });
   });
 
   after(function(done) {
     mongoose.connection.db.dropDatabase(function() {
-      mongolastic.deleteIndex('cat', function() {
-        mongolastic.deleteIndex('dog', function() {
-          done();
-        });
+      mongolastic.deleteIndex('*', function() {
+        done();
       });
     });
   });
