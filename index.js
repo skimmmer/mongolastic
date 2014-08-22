@@ -77,7 +77,7 @@ mongolastic.prototype.populate = function populate(doc, schema, callback) {
   var elastic = getInstance();
 
   function populateReferences(options, currentpath, callback) {
-    if(options.ref) {
+    if(options && options.ref) {
       if(options.elastic && options.elastic.avoidpop ) {
         callback();
       } else {
@@ -263,10 +263,30 @@ mongolastic.prototype.renderMapping = function(model, callback) {
   function map_create(k, currentkey, cb) {
     var currentPath = k.schema.paths[currentkey];
     if(currentPath && currentPath.options && currentPath.options.elastic && currentPath.options.elastic.mapping) {
+      // Regular field
       k.mapping[currentkey] = currentPath.options.elastic.mapping;
       cb();
-    } else if (currentPath && 'schema' in currentPath) {
-      k.mapping[currentkey] = { type: 'nested', properties: {} };
+    } else if (currentPath && currentPath.options && currentPath.options.ref) {
+      // Reference model/schema
+      var refmodel = model.model(currentPath.options.ref);
+      if (refmodel.schema.options && refmodel.schema.options.elastic && refmodel.schema.options.elastic.mapping) {
+        k.mapping[currentkey] = refmodel.schema.options.elastic.mapping;
+        k.mapping[currentkey].properties = {};
+      } else {
+        k.mapping[currentkey] = { properties: {} };
+      }
+      async.each(Object.keys(refmodel.schema.paths), 
+        map_create.bind(null, {schema: refmodel.schema, mapping: k.mapping[currentkey].properties}),
+        cb
+      );
+    } else if (currentPath && currentPath.schema) {
+      // Subdoc/schema
+      if (currentPath.schema.options && currentPath.schema.options.elastic && currentPath.schema.options.elastic.mapping) {
+        k.mapping[currentkey] = currentPath.schema.options.elastic.mapping;
+        k.mapping[currentkey].properties = {};
+      } else {
+        k.mapping[currentkey] = { properties: {} };
+      }
       async.each(Object.keys(currentPath.schema.paths), 
         map_create.bind(null, {schema: currentPath.schema, mapping: k.mapping[currentkey].properties}),
         cb

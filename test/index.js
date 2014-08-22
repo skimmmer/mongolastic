@@ -8,47 +8,56 @@ var assert = require('assert'),
 
 describe('mongolastic', function(){
   //mongoose.set('debug', true);
-  var cat, CatSchema, CostumeSchema, costume, DogSchema, dog;
+  var cat, CatSchema, CostumeSchema, ToySchema, costume, DogSchema, dog;
   before(function() {
     mongoose.connect('mongodb://localhost/mongolastic');
+	var db = mongoose.connection;
 
-    CostumeSchema = mongoose.Schema({
-      name: {type: String},
-      color: {type: String},
-      integer: {type: Number, elastic: {mapping: {type: 'integer'}}}
-    });
-    CostumeSchema.plugin(mongolastic.plugin, {modelname: 'costume'});
-    costume = mongoose.model('costume', CostumeSchema);
+	db.on('error', console.error.bind(console, 'connection error:'));
+	db.once('open', function callback() {
+		CostumeSchema = mongoose.Schema({
+		  name: {type: String},
+		  color: {type: String},
+		  integer: {type: Number, elastic: {mapping: {type: 'integer'}}}
+		});
+		CostumeSchema.plugin(mongolastic.plugin, {modelname: 'costume'});
+		costume = mongoose.model('costume', CostumeSchema);
 
-    CatSchema = mongoose.Schema({
-      name: String,
-      date: {type: Date, default: Date.now},
-      costume: {type: mongoose.Schema.ObjectId, ref: 'costume', elastic: {popfields: 'name'}},
-      url: {type: String, elastic: {mapping: {type: 'string', index: 'not_analyzed'}}},
-      test: {
-        integer: {type: Number, elastic: {mapping: {type: 'integer'}}},
-        deep: {
-          mystring: {type: String, elastic: {mapping: {type: 'string'}}}
-        }
-      }
-    });
-    CatSchema.plugin(mongolastic.plugin, {modelname: 'cat'});
-    cat = mongoose.model('cat', CatSchema);
+		ToySchema = mongoose.Schema({
+		  name: {type: String},
+		  price: {type: Number, elastic: {mapping: {type: 'integer', index: 'not_analyzed'}}},
+		}, { elastic: { mapping: { type: 'nested' }}});
 
-    cat.elastic = {
-      mapping: {
-        'location.geo': { type: 'geo_point', 'lat_lon': true }
-      }
-    };
+		CatSchema = mongoose.Schema({
+		  name: String,
+		  date: {type: Date, default: Date.now},
+		  costume: {type: mongoose.Schema.ObjectId, ref: 'costume', elastic: {popfields: 'name'}},
+		  toys: [ToySchema],
+		  url: {type: String, elastic: {mapping: {type: 'string', index: 'not_analyzed'}}},
+		  test: {
+			integer: {type: Number, elastic: {mapping: {type: 'integer'}}},
+			deep: {
+			  mystring: {type: String, elastic: {mapping: {type: 'string'}}}
+			}
+		  }
+		});
+		CatSchema.plugin(mongolastic.plugin, {modelname: 'cat'});
+		cat = mongoose.model('cat', CatSchema);
 
-    DogSchema = mongoose.Schema({
-      name: String,
-      date: {type: Date, default: Date.now},
-      costume: {type: mongoose.Schema.ObjectId, ref: 'costume'}
-    });
-    DogSchema.plugin(mongolastic.plugin, {modelname: 'dog'});
-    dog = mongoose.model('dog', DogSchema);
+		cat.elastic = {
+		  mapping: {
+			'location.geo': { type: 'geo_point', 'lat_lon': true }
+		  }
+		};
 
+		DogSchema = mongoose.Schema({
+		  name: String,
+		  date: {type: Date, default: Date.now},
+		  costume: {type: mongoose.Schema.ObjectId, ref: 'costume'}
+		});
+		DogSchema.plugin(mongolastic.plugin, {modelname: 'dog'});
+		dog = mongoose.model('dog', DogSchema);
+	});
   });
 
   describe('mongolastic', function () {
@@ -212,11 +221,17 @@ describe('mongolastic', function(){
         response['mongolastic-cat'].mappings.should.be.object;
         response['mongolastic-cat'].mappings.cat.should.be.object;
         response['mongolastic-cat'].mappings.cat.properties.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.costume.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.costume.properties.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.costume.properties.integer.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.toys.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.toys.properties.should.be.object;
+        response['mongolastic-cat'].mappings.cat.properties.toys.properties.price.should.be.object;
         response['mongolastic-cat'].mappings.cat.properties.test.should.be.object;
         response['mongolastic-cat'].mappings.cat.properties.test.properties.should.be.object;
         response['mongolastic-cat'].mappings.cat.properties.test.properties.deep.should.be.object;
         response['mongolastic-cat'].mappings.cat.properties.test.properties.deep.properties.should.be.object;
-        //console.log(JSON.stringify(response));
+        console.log(JSON.stringify(response, null, 4));
         done();
       });
     });
