@@ -172,22 +172,11 @@ mongolastic.prototype.populateSubdoc = function populateSubdoc(doc, schema, curr
 mongolastic.prototype.plugin = function plugin(schema, options) {
   if(options.modelname) {
     var elastic = getInstance();
+    schema.options.elastic = schema.options.elastic || {};
+    schema.options.elastic.modelname = options.modelname;
 
-    schema.pre('save', function(next, done) {
-      var self = this;
-      elastic.populate(self, schema, function(err) {
-        if(!err) {
-          elastic.index(options.modelname, self, function(err) {
-            if(!err) {
-              next();
-            } else {
-              done(new Error('Could not save in Elasticsearch index: ' + err));
-            }
-          });
-        } else {
-          done(new Error('Could not save in Elasticsearch: '+err));
-        }
-      });
+    schema.pre('save', function(next) {
+      elastic.save(this, next);
     });
 
     schema.post('remove', function() {
@@ -197,25 +186,26 @@ mongolastic.prototype.plugin = function plugin(schema, options) {
         }
       });
     });
+
     /**
      * Search on current model with predefined index
      * @param query
      * @param cb
      */
-    schema.methods.search = function(query, cb) {
+    schema.method('search', function(query, cb) {
       query.index = elastic.getIndexName(options.modelname);
       elastic.search(query, cb);
-    };
+    });
 
     /**
      * Search with specifiing a model or index
      * @type {search|Function|string|api.indices.stats.params.search|Boolean|commandObject.search|*}
      */
-    schema.statics.search = elastic.search;
+    schema.static('search', elastic.search);
 
-    schema.statics.sync = function (callback) {
+    schema.static('sync', function (callback) {
       return elastic.sync(this, options.modelname, callback);
-    };
+    });
 
   } else {
     console.log('missing modelname');
@@ -260,8 +250,12 @@ mongolastic.prototype.renderMapping = function(model, callback) {
   };
 
   // Recursive mapping (supports nested/subdocs)
-  function map_create(k, currentkey, cb) {
+  function mapCreate(k, currentkey, cb) {
+    var fullkey = k.keyext + currentkey;
     var currentPath = k.schema.paths[currentkey];
+    if (model.schema.options.elastic.ignore && model.schema.options.elastic.ignore.indexOf(fullkey) !== -1) {
+      return cb();
+    }
     if(currentPath && currentPath.options && currentPath.options.elastic && currentPath.options.elastic.mapping) {
       // Regular field
       k.mapping[currentkey] = currentPath.options.elastic.mapping;
@@ -276,7 +270,7 @@ mongolastic.prototype.renderMapping = function(model, callback) {
         k.mapping[currentkey] = { properties: {} };
       }
       async.each(Object.keys(refmodel.schema.paths), 
-        map_create.bind(null, {schema: refmodel.schema, mapping: k.mapping[currentkey].properties}),
+        mapCreate.bind(null, {keyext: fullkey+'.', schema: refmodel.schema, mapping: k.mapping[currentkey].properties}),
         cb
       );
     } else if (currentPath && currentPath.schema) {
@@ -288,7 +282,7 @@ mongolastic.prototype.renderMapping = function(model, callback) {
         k.mapping[currentkey] = { properties: {} };
       }
       async.each(Object.keys(currentPath.schema.paths), 
-        map_create.bind(null, {schema: currentPath.schema, mapping: k.mapping[currentkey].properties}),
+        mapCreate.bind(null, {keyext: fullkey+'.', schema: currentPath.schema, mapping: k.mapping[currentkey].properties}),
         cb
       );
     } else {
@@ -299,7 +293,7 @@ mongolastic.prototype.renderMapping = function(model, callback) {
   async.series([
     function(callback) {
       async.each(Object.keys(model.schema.paths), 
-        map_create.bind(null, { schema: model.schema, mapping: mapping[model.modelName].properties }), 
+        mapCreate.bind(null, { keyext: '', schema: model.schema, mapping: mapping[model.modelName].properties }), 
         function(err) {
           callback(err);
         }
@@ -333,6 +327,89 @@ mongolastic.prototype.renderMapping = function(model, callback) {
  */
 mongolastic.prototype.registerModel = function(model, callback) {
   var elastic = getInstance();
+
+  // Generate ignore list
+  model.schema.options.elastic.ignore = model.schema.options.elastic.ignore || [];
+  Object.keys(model.schema.paths).forEach(buildIgnore.bind(null, { schema: model.schema }));
+
+  function buildIgnore(k, currentkey) {
+    var currentPath = k.schema.paths[currentkey];
+    var fullpath = currentkey;
+    if (k.path) {
+      fullpath = k.path + '.' + fullpath;
+    }
+    if(currentPath && currentPath.options && currentPath.options.elastic && currentPath.options.elastic.ignore) {
+      // Regular field
+      model.schema.options.elastic.ignore.push(fullpath);
+    } else if (currentPath && currentPath.options && currentPath.options.ref) {
+      // Reference model/schema
+      // FIXME: model not defined, have separate list?
+      var refmodel = model.model(currentPath.options.ref);
+      if (currentPath.options.elastic && currentPath.options.elastic.ignore) {
+        model.schema.options.elastic.ignore.push(fullpath);
+      }
+      Object.keys(refmodel.schema.paths).forEach(buildIgnore.bind(null, {path: fullpath, schema: refmodel.schema }));
+    } else if (currentPath && currentPath.schema) {
+      // Subdoc/schema
+      if (currentPath.options.elastic && currentPath.options.elastic.ignore) {
+        model.schema.options.elastic.ignore.push(fullpath);
+      }
+      Object.keys(currentPath.schema.paths).forEach(buildIgnore.bind(null, {path: fullpath, schema: currentPath.schema }));
+    }
+  }
+
+  var _findByIdAndUpdate = model.findByIdAndUpdate;
+  model.findByIdAndUpdate = function(id, update, arg1, arg2) {
+    if (typeof arg1 === 'function') {
+      return _findByIdAndUpdate.bind(model, id, update, function(err, doc) {
+        if (!err) {
+          elastic.save(doc);
+        }
+        arg1(err, doc);
+      })();
+    } else if (typeof arg2 === 'function') {
+      return _findByIdAndUpdate.bind(model, id, update, arg1, function(err, doc) {
+        if (!err) {
+          elastic.save(doc);
+        }
+        arg2(err, doc);
+      })();
+    } else {
+      if (arg1) {
+        return _findByIdAndUpdate.bind(model, id, update, arg1)();
+      } else if (id && update) {
+        return _findByIdAndUpdate.bind(model, id, update)();
+      }
+    }
+    return _findByIdAndUpdate.bind(model)();
+  };
+
+  var _findOneAndUpdate = model.findOneAndUpdate;
+  model.findOneAndUpdate = function(cond, update, arg1, arg2) {
+    if (typeof arg1 === 'function') {
+      return _findOneAndUpdate.bind(model, cond, update, function(err, doc) {
+        if (!err) {
+          elastic.save(doc);
+        }
+        arg1(err, doc);
+      })();
+    } else if (typeof arg2 === 'function') {
+      return _findOneAndUpdate.bind(model, cond, update, arg1, function(err, doc) {
+        if (!err) {
+          elastic.save(doc);
+        }
+        arg2(err, doc);
+      })();
+    } else {
+      if (arg1) {
+        return _findOneAndUpdate.bind(model, cond, update, arg1)();
+      } else if (cond && update) {
+        return _findOneAndUpdate.bind(model, cond, update)();
+      }
+    }
+    return this.findOneAndUpdate.bind(model)();
+  };
+
   elastic.indices.checkCreateByModel(model,
     function(err) {
       callback(err, model);
@@ -405,6 +482,59 @@ mongolastic.prototype.search = function(query, callback) {
     query.index = elastic.prefix + '-*';
   }
   elastic.connection.search(query, callback);
+};
+
+/**
+ * Save function for document
+ * @param doc
+ * @param callback
+ */
+mongolastic.prototype.save = function save(doc, next) {
+  var elastic = getInstance();
+  var schema = doc.schema;
+  elastic.populate(doc, schema, function(err) {
+    if(!err) {
+      doc = doc.toObject();
+      if (schema.options.elastic && schema.options.elastic.ignore) {
+        schema.options.elastic.ignore.forEach(ignore, doc);
+      }
+      elastic.index(schema.options.elastic.modelname, doc, function(err) {
+        if(!err) {
+          if (next) {
+            next();
+          }
+        } else {
+          if (next) {
+            next(new Error('Could not save in Elasticsearch index: ' + err));
+          }
+        }
+      });
+    } else {
+      if (next) {
+        next(new Error('Could not save in Elasticsearch index: ' + err));
+      }
+    }
+  });
+
+  function ignore(path, field) {
+    if (!field) {
+      field = this;
+    }
+    var ps = path.split('.');
+    if (ps.length > 1) {
+      var nf = field[ps[0]];
+      var np = ps.slice(1).join('.');
+      if (Array.isArray(nf)) {
+        for (var i = 0; i < nf.length; ++i) {
+          ignore(np, nf[i]);
+        }
+      } else {
+        ignore(np, field[ps[0]]);
+      }
+    } else {
+      delete field[ps];
+    }
+  }
 };
 
 /**
